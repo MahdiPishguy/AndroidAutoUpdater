@@ -10,6 +10,8 @@ import android.support.v4.app.NotificationCompat;
 import android.support.v4.app.NotificationManagerCompat;
 import android.util.Log;
 
+import com.aspsine.androidappupdater.demo.SP;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -123,6 +125,7 @@ public class UpdateService extends Service {
         private InputStream                  inputStream;
         int responseCode = 0;
         int total        = 0;
+        private long myLastModified = 0;
 
         public WeakDownloader(UpdateService updateService, NotificationManagerCompat notificationManager, String url, File file) {
             this.mReference = new WeakReference<>(updateService);
@@ -135,40 +138,76 @@ public class UpdateService extends Service {
 
         @Override
         public void run() {
+            myLastModified = SP.getInstance().getLong(SP.SharedPrefsTypes.lastUpdate); // get last stored value for this file (use file name or other key)
+            int total = 0;
+
             final URL         url;
             HttpURLConnection httpURLConnection = null;
             try {
                 try {
                     url = new URL(mUrl);
-                    String lastModified = httpURLConnection.getHeaderField("Last-Modified");
-                    if (!lastModified.isEmpty()) {
-                        httpURLConnection.setRequestProperty("If-Range", lastModified);
-                    }
 
                     httpURLConnection = (HttpURLConnection) url.openConnection();
+                    httpURLConnection.setDoInput(true);
 
-                    if (mFile.exists()) {
-                        downloadedLength = mFile.length();
-                        Log.e("downloadedLength ", downloadedLength + "");
-                        httpURLConnection.setRequestProperty("Range", "bytes=" + downloadedLength + "-");
-                        fileOutputStream = new FileOutputStream(mFile, true);
-                    } else {
-                        fileOutputStream = new FileOutputStream(mFile);
-                    }
                     httpURLConnection.setConnectTimeout(30000);
                     httpURLConnection.setReadTimeout(30000);
                     httpURLConnection.setRequestMethod("GET");
+
+                    //*** new way to handle download process
+                    total = httpURLConnection.getContentLength();
+                    if (mFile.exists()) {
+                        if (mFile.length() == total) {
+                            //we are done, return.
+                            return;
+                        } else {
+                            //file was not completly donwloaded, now check lastModified:
+                            long lastModified = httpURLConnection.getLastModified();//this gets the header "Last-Modified" and convert to long
+                            if (lastModified == myLastModified) { //myLastModified should be retrived on each download and stored locally on ur system
+                                downloadedLength = mFile.length();
+                                Log.e("downloadedLength ", downloadedLength + "");
+
+                                httpURLConnection.setDoInput(true);
+
+                                httpURLConnection.setConnectTimeout(30000);
+                                httpURLConnection.setReadTimeout(30000);
+                                httpURLConnection.setRequestMethod("GET");
+
+                                httpURLConnection.setRequestProperty("Range", "bytes=" + downloadedLength + "-");
+
+                                //append mode
+                                fileOutputStream = new FileOutputStream(mFile, true);
+                            } else {
+                                //file was modified after 1st uncompleted-download:
+                                //storeLastModified(lastModified, mFile.getName()); // use file name as key. can store in db or file ...
+                                SP.getInstance().setLong(SP.SharedPrefsTypes.lastUpdate, lastModified);
+
+                                //don't set ant Range ... we want full download, with a fresh file
+                                fileOutputStream = new FileOutputStream(mFile);
+                            }//last mod IF
+
+                        }//Length check
+                    } else {
+                        //file not exist at all, create new file, set no Range we want full download...
+                        mFile.createNewFile();
+                        fileOutputStream = new FileOutputStream(mFile);
+                    }//file exists.
+
                 } catch (IOException e) {
+                    e.printStackTrace();
                 }
+                int responseCode = 0;
 
                 try {
                     responseCode = httpURLConnection.getResponseCode();
-                    total = httpURLConnection.getContentLength();
+
                 } catch (IOException e) {
                     e.printStackTrace();
                     Log.e("ER UPDATE ", e.getMessage());
                 }
-                if (responseCode == 200) {
+
+                //*****
+                if (responseCode == 200 || responseCode == 206) {
                     try {
                         inputStream = httpURLConnection.getInputStream();
                     } catch (IOException e) {
@@ -240,7 +279,7 @@ public class UpdateService extends Service {
             mBuilder.setContentTitle("Updating")
                     .setContentText("Downloading")
                     .setProgress(100, mStatus.progress, false);
-            notifyNotification();
+            //notifyNotification();
         }
 
         private void onDownloadCompleted() {
@@ -298,7 +337,7 @@ public class UpdateService extends Service {
         }
 
         private void notifyNotification() {
-            mNotificationManager.notify(0, mBuilder.build());
+            //mNotificationManager.notify(0, mBuilder.build());
         }
 
         void reset() {
