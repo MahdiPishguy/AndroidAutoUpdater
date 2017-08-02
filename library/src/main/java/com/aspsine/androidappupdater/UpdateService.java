@@ -166,7 +166,7 @@ public class UpdateService extends Service {
                             if (lastModified == myLastModified) { //myLastModified should be retrived on each download and stored locally on ur system
                                 downloadedLength = mFile.length();
                                 Log.e("downloadedLength ", downloadedLength + "");
-
+                                httpURLConnection = (HttpURLConnection) url.openConnection();
                                 httpURLConnection.setDoInput(true);
 
                                 httpURLConnection.setConnectTimeout(30000);
